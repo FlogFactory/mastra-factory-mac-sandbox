@@ -1,0 +1,41 @@
+{
+  "name": "mastra-factory-mac-sandbox",
+  "version": "0.1.0",
+  "description": "A Sandcastle + macOS Seatbelt sandbox for self-hosted Mastra Factory: agents write only in their worktree and can't read your secrets.",
+  "license": "MIT",
+  "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/FlogFactory/mastra-factory-mac-sandbox.git"
+  },
+  "keywords": ["mastra", "mastra-factory", "sandbox", "seatbelt", "sandcastle", "macos", "agents"],
+  "engines": {
+    "node": ">=22.18.0"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": ["dist", "README.md", "THREAT_MODEL.md", "SECURITY.md", "CHANGELOG.md", "LICENSE"],
+  "scripts": {
+    "build": "rm -rf dist && tsc -p tsconfig.build.json",
+    "check": "tsc --noEmit",
+    "test": "node --test test/*.test.ts",
+    "prepack": "npm run build"
+  },
+  "dependencies": {
+    "@ai-hero/sandcastle": "0.14.0"
+  },
+  "peerDependencies": {
+    "@mastra/core": ">=1.85.0 <2",
+    "@mastra/factory": ">=0.30.0 <1"
+  },
+  "devDependencies": {
+    "@mastra/core": "1.85.0",
+    "@mastra/factory": "0.30.0",
+    "@types/node": "26.6.6",
+    "typescript": "6.0.3"
+  }
+}

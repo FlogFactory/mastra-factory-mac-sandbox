@@ -1,0 +1,40 @@
+name: Task for the Factory
+description: A change for Factory's agents to plan, build and open a pull request for.
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Factory's planner works from this issue. Say what's wrong or missing and how we'll know it's done.
+        Keep one change per issue.
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What's wrong or missing, and who it affects. Include an example input and output if you have one.
+      placeholder: A command in the sandbox can read files under /opt/homebrew/etc, which may hold service credentials.
+    validations:
+      required: true
+  - type: textarea
+    id: done-when
+    attributes:
+      label: Done when
+      description: Acceptance criteria, one per line. Each should be something a reviewer can check.
+      value: |
+        - [ ]
+        - [ ] A test covers the change.
+        - [ ] Uses only the setup and test commands this repo already has (see AGENTS.md or README); no invented commands.
+        - [ ] Changes nothing outside what this issue asks for.
+        - [ ] Opens a pull request for human review.
+    validations:
+      required: true
+  - type: textarea
+    id: where
+    attributes:
+      label: Where to look
+      description: Optional. Files, functions or past issues and PRs that are relevant.
+      placeholder: src/sandbox.ts, THREAT_MODEL.md, issue #12
+  - type: textarea
+    id: out-of-scope
+    attributes:
+      label: Out of scope
+      description: Optional. Things the agent should not change.
