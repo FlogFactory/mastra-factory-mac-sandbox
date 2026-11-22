@@ -2,28 +2,52 @@
   "name": "mastra-factory-mac-sandbox",
   "version": "0.1.0",
   "description": "A Sandcastle + macOS Seatbelt sandbox for self-hosted Mastra Factory: agents write only in their worktree and can't read your secrets.",
+  "keywords": [
+    "mastra",
+    "mastra-factory",
+    "sandbox",
+    "seatbelt",
+    "sandcastle",
+    "macos",
+    "agents"
+  ],
   "license": "MIT",
-  "type": "module",
+  "author": "Adam Burmister",
+  "homepage": "https://github.com/FlogFactory/mastra-factory-mac-sandbox#readme",
+  "bugs": {
+    "url": "https://github.com/FlogFactory/mastra-factory-mac-sandbox/issues"
+  },
   "repository": {
     "type": "git",
     "url": "git+https://github.com/FlogFactory/mastra-factory-mac-sandbox.git"
   },
-  "keywords": ["mastra", "mastra-factory", "sandbox", "seatbelt", "sandcastle", "macos", "agents"],
+  "type": "module",
+  "sideEffects": false,
   "engines": {
     "node": ">=22.18.0"
   },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
       "types": "./dist/index.d.ts",
-      "import": "./dist/index.js"
-    }
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
   },
-  "files": ["dist", "README.md", "THREAT_MODEL.md", "SECURITY.md", "CHANGELOG.md", "LICENSE"],
+  "files": [
+    "dist",
+    "THREAT_MODEL.md",
+    "SECURITY.md",
+    "CHANGELOG.md"
+  ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.build.json",
     "check": "tsc --noEmit",
     "test": "node --test test/*.test.ts",
-    "prepack": "npm run build"
+    "prepack": "npm run build",
+    "prepublishOnly": "npm run check && npm test"
   },
   "dependencies": {
     "@ai-hero/sandcastle": "0.14.0"
@@ -37,5 +61,9 @@
     "@mastra/factory": "0.30.0",
     "@types/node": "26.6.6",
     "typescript": "6.0.3"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
   }
 }

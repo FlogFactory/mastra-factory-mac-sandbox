@@ -101,6 +101,8 @@ npm run check
 
 `npm test` runs unit tests everywhere and the Seatbelt isolation tests on macOS (they need network for `git clone` and `npm view`). Report security problems as described in [SECURITY.md](SECURITY.md).
 
+To release: bump `version` in `package.json`, add a `CHANGELOG.md` entry, commit, tag `vX.Y.Z`, then `npm publish` on a Mac (`prepublishOnly` runs the typecheck and all tests, including the isolation tests; `prepack` builds `dist/`).
+
 ## License
 
 MIT. Sandcastle is MIT; Mastra is Apache-2.0 and is a peer dependency, not bundled.
