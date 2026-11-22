@@ -5,7 +5,7 @@ A session sandbox for a self-hosted [Mastra Factory](https://factory.mastra.ai) 
 - write only inside their session's worktree (plus a private `HOME` and `TMPDIR`);
 - **can't read** `~/.ssh`, your Factory's secrets and data dirs, or `.env` files in other projects;
 - get an allow-listed environment, never the server's own; per-command credentials (Factory's GitHub token) arrive on stdin, never on a command line;
-- keep the network, so `git clone` and `npm install` work;
+- keep the network, so `git clone`, `npm install` and `pnpm install` work;
 - run through an optional execution slot with memory, disk and load checks.
 
 It exists because Mastra's own `LocalSandbox` Seatbelt mode has no deny-read paths ([mastra-ai/mastra#31128](https://github.com/mastra-ai/mastra/issues/31128)). If that lands upstream, you may not need this.
@@ -44,7 +44,7 @@ On each session's `start()`, the sandbox runs a probe inside Seatbelt and **refu
 |---|---|---|
 | `root` | `~/.factory-sandboxes` | Parent dir for per-session roots. Avoid spaces. Must not overlap a deny path. |
 | `commandTimeoutMs` | 15 min | Upper bound for any one command, even if Factory asks for longer. |
-| `env` | `LANG=en_US.UTF-8`, `GIT_TERMINAL_PROMPT=0` | Non-secret env every command gets. |
+| `env` | `LANG=en_US.UTF-8`, `GIT_TERMINAL_PROMPT=0` | Non-secret env every command gets. `HOME`, `TMPDIR` and `XDG_RUNTIME_DIR` (set to `TMPDIR`, so pnpm's locks land there instead of `/tmp`) always point at the sandbox's private dirs. |
 | `passEnv` | `[]` | Names copied from the server's env. Nothing else from the server's env reaches a command. |
 | `factoryDirs` | `[]` | Your Factory's data and secrets dirs. Proved unreadable on start. |
 | `denyRead` | `[]` | More paths to prove unreadable, added to the defaults: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.docker`, `~/.kube`, `~/.config/gh`, `~/.config/gcloud` and the server's `./.env`. |

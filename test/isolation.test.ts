@@ -31,6 +31,15 @@ function seatbeltNestingRefused(): boolean {
   }
 }
 
+const hasPnpm = (() => {
+  try {
+    execFileSync('pnpm', ['--version'], { stdio: 'ignore' });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
 // In CI the job must prove isolation, so never skip there: a refusal fails loudly instead.
 const skipReason = !onMac
   ? 'macOS only'
@@ -156,6 +165,17 @@ describe('Seatbelt isolation (macOS)', { skip: skipReason }, () => {
     const r = await sh('npm view left-pad version');
     assert.equal(r.success, true, r.stderr);
     assert.match(r.stdout.trim(), /^\d+\.\d+\.\d+$/);
+  });
+
+  test('XDG_RUNTIME_DIR is the private TMPDIR, so runtime lock dirs are writable', async () => {
+    const r = await sh('test "$XDG_RUNTIME_DIR" = "$TMPDIR" && mkdir "$XDG_RUNTIME_DIR/pnpm-store-operation-locks-$(id -u)" && echo ok');
+    assert.equal(r.stdout, 'ok\n', r.stderr);
+  });
+
+  // CI's macOS runner has no pnpm; the XDG_RUNTIME_DIR test above proves the mechanism there.
+  test('pnpm install works (it locks the store under XDG_RUNTIME_DIR, not /tmp)', { skip: hasPnpm ? false : 'pnpm is not on PATH' }, async () => {
+    const r = await sh('mkdir pnpm-it && cd pnpm-it && echo \'{"name":"p","version":"1.0.0"}\' > package.json && pnpm install');
+    assert.equal(r.success, true, r.stdout + r.stderr);
   });
 
   test('the slot is held only while a command runs', async () => {

@@ -17,13 +17,23 @@ test('shq quotes for bash, including single quotes', () => {
 });
 
 test('the command script reads env from stdin and passes args literally', () => {
-  assert.equal(buildCommandScript('echo', ["it's"], 0), `eval "$(cat)"; exec 'echo' 'it'\\''s' </dev/null`);
+  assert.equal(buildCommandScript('echo', ["it's"], 0), `eval "$(cat)"; export XDG_RUNTIME_DIR="$TMPDIR"; exec 'echo' 'it'\\''s' </dev/null`);
   assert.match(buildCommandScript('sleep', ['5'], 3), /alarm shift; exec @ARGV or die \$!' 3 'sleep' '5'/);
   const out = execFileSync('/bin/bash', ['-c', buildCommandScript('/bin/sh', ['-c', 'echo "$TOK|$1"', 'x', 'a;$(id)'], 0)], {
     input: buildEnvExports({ TOK: "s3cr'et" }) + '\n',
     encoding: 'utf8',
   });
   assert.equal(out, "s3cr'et|a;$(id)\n");
+});
+
+test('XDG_RUNTIME_DIR is always the private TMPDIR, even if the env names another dir', () => {
+  // pnpm 12 keeps its lock dirs in $XDG_RUNTIME_DIR, else /tmp, which the sandbox can't write.
+  const out = execFileSync('/bin/bash', ['-c', buildCommandScript('/bin/sh', ['-c', 'echo "$XDG_RUNTIME_DIR"'], 0)], {
+    input: buildEnvExports({ XDG_RUNTIME_DIR: '/tmp' }) + '\n',
+    env: { PATH: process.env.PATH, TMPDIR: '/private/sandbox/tmp' },
+    encoding: 'utf8',
+  });
+  assert.equal(out, '/private/sandbox/tmp\n');
 });
 
 test('env exports drop invalid names and undefined values', () => {
