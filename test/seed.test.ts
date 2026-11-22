@@ -1,9 +1,10 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
-import { tmpdir } from 'node:os';
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { cloneTree, seedPnpmCopy } from '../src/seed.ts';
+import { SandboxIsolationError, SeatbeltSandbox } from '../src/sandbox.ts';
 
 const skip = process.platform === 'darwin' ? false : 'APFS clones are macOS only';
 
@@ -70,3 +71,55 @@ test('without a usable seed, seedPnpmCopy leaves empty dirs and says why', { ski
     f.done();
   }
 });
+
+test('a subtree the seed could not provide is retried on the next start', { skip }, () => {
+  const f = fixture();
+  try {
+    const copy = join(f.dir, 'session', '.pnpm');
+    // The seed has no store yet: the cache seeds, the store is reported and left empty.
+    rmSync(join(f.seed, 'store'), { recursive: true, force: true });
+    const first = seedPnpmCopy(f.seed, copy);
+    assert.equal(first.seeded, true);
+    assert.match(first.reason!, /store/);
+    assert.deepEqual(readdirSync(join(copy, 'store')), []);
+    // The session installs while the store was missing, so its copy holds real data.
+    writeFileSync(join(copy, 'cache/session-file'), 'kept');
+    // The seed is filled, the session restarts: the store is cloned, the cache is left alone.
+    mkdirSync(join(f.seed, 'store/v11/files/00'), { recursive: true });
+    writeFileSync(join(f.seed, 'store/v11/files/00/pkg'), 'package bytes');
+    assert.deepEqual(seedPnpmCopy(f.seed, copy), { seeded: true });
+    assert.equal(readFileSync(join(copy, 'store/v11/files/00/pkg'), 'utf8'), 'package bytes');
+    assert.equal(readFileSync(join(copy, 'cache/session-file'), 'utf8'), 'kept');
+  } finally {
+    f.done();
+  }
+});
+
+test("a session's own store is never replaced by a later seed", { skip }, () => {
+  const f = fixture();
+  try {
+    const copy = join(f.dir, 'session', '.pnpm');
+    assert.deepEqual(seedPnpmCopy(f.seed, copy), { seeded: true });
+    writeFileSync(join(copy, 'store/mine'), 'x');
+    // The seed is rebuilt with different contents, the session restarts.
+    writeFileSync(join(f.seed, 'store/v11/files/00/pkg'), 'different bytes');
+    assert.deepEqual(seedPnpmCopy(f.seed, copy), { seeded: false, reason: 'already present' });
+    assert.equal(readFileSync(join(copy, 'store/mine'), 'utf8'), 'x');
+    assert.equal(readFileSync(join(copy, 'store/v11/files/00/pkg'), 'utf8'), 'package bytes');
+  } finally {
+    f.done();
+  }
+});
+
+test('a deny path inside the seed is refused', () => {
+  const dir = realpathSync(mkdtempSync(join(tmpdir(), 'mfms-root-')));
+  try {
+    assert.throws(
+      () => new SeatbeltSandbox({ sessionId: 'wide-seed', root: join(dir, 'sandboxes'), pnpmSeed: homedir() }),
+      (err: Error) => err instanceof SandboxIsolationError && /pnpmSeed/.test(err.message),
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+

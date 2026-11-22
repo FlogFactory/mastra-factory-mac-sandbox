@@ -122,8 +122,12 @@ export class SeatbeltSandbox extends MastraSandbox {
     }
   }
 
-  /** Set by start(): whether this start cloned the seed, or why not. */
-  pnpmSeedResult?: SeedResult;
+  #pnpmSeedResult?: SeedResult;
+
+  /** Set by start(): whether that start cloned the seed, and why not when it did not. */
+  get pnpmSeedResult(): SeedResult | undefined {
+    return this.#pnpmSeedResult;
+  }
 
   get sessionRoot(): string {
     return this.#sessionRoot;
@@ -151,7 +155,14 @@ export class SeatbeltSandbox extends MastraSandbox {
       const copy = join(this.#sessionRoot, '.pnpm');
       const exclude = join(this.#sessionRoot, '.git', 'info', 'exclude');
       if (!(existsSync(exclude) && readFileSync(exclude, 'utf8').includes('/.pnpm/'))) appendFileSync(exclude, '/.pnpm/\n');
-      this.pnpmSeedResult = seedPnpmCopy(this.#pnpmSeed, copy);
+      this.#pnpmSeedResult = seedPnpmCopy(this.#pnpmSeed, copy);
+      const seedResult = this.#pnpmSeedResult;
+      // A configured seed that did not seed is the operator's problem, not the session's: say so
+      // once instead of letting the session run cold without a trace.
+      if (seedResult.reason && seedResult.reason !== 'already present') {
+        console.warn(`pnpmSeed ${this.#pnpmSeed}: ${seedResult.reason}`);
+      }
+
       // Writable, and only this session's copy: the seed is never mounted.
       mounts.push({ hostPath: copy, sandboxPath: copy });
     }

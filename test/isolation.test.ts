@@ -3,7 +3,7 @@
  * Seatbelt. Every secret here is a fixture in a temporary dir; the real `~/.ssh` is only probed for
  * "can't list it", with output discarded inside the sandbox.
  */
-import { describe, test, before, after } from 'node:test';
+import { describe, test, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -259,5 +259,24 @@ describe('pnpm seed (macOS)', { skip: skipReason }, () => {
       () => new SeatbeltSandbox({ sessionId: 'bad-seed', root: join(dir, 'sandboxes'), pnpmSeed: join(homedir(), '.ssh') }),
       (err: Error) => err instanceof SandboxIsolationError && /pnpmSeed/.test(err.message),
     );
+  });
+
+  test('a seed that cannot be used is reported on start, and pnpm still works', async () => {
+    const warn = mock.method(console, 'warn', () => undefined);
+    const missing = join(dir, 'no-seed-yet');
+    const cold = new SeatbeltSandbox({ sessionId: 'unseeded', root: join(dir, 'sandboxes'), pnpmSeed: missing });
+    try {
+      await cold.start();
+      const said = warn.mock.calls.map((c) => String(c.arguments[0])).filter((a) => a.startsWith('pnpmSeed '));
+      assert.equal(said.length, 1, said.join('\n'));
+      assert.match(said[0], /no-seed-yet/);
+      assert.equal(cold.pnpmSeedResult?.seeded, false);
+      assert.match(cold.pnpmSeedResult?.reason ?? '', /no-seed-yet/);
+      const r = await cold.executeCommand('/bin/sh', ['-c', `echo x > "$pnpm_config_store_dir/added" && cat "$pnpm_config_store_dir/added"`]);
+      assert.equal(r.stdout, 'x\n', r.stderr);
+    } finally {
+      warn.mock.restore();
+      await cold.destroy();
+    }
   });
 });

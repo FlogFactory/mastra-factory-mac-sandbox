@@ -4,7 +4,7 @@
  * their copy; nothing flows back into the seed.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 
 /**
@@ -26,29 +26,68 @@ export function cloneTree(src: string, dst: string): void {
   }
 }
 
+const SUBTREES = ['cache', 'store'] as const;
+
 export interface SeedResult {
+  /** True when at least one subtree came from the seed during this call. */
   seeded: boolean;
+  /** Why a subtree was not seeded, or `already present` when there was nothing to do. */
   reason?: string;
 }
 
 /**
  * Give a session its pnpm `store/` and `cache/` under `copyDir`, cloned from `seedDir` when the
- * session has none yet. A copy that already exists is kept: a restarted session keeps the packages
- * it added. Without a usable seed (none built yet, another volume), the dirs start empty and pnpm
- * downloads as usual.
+ * session does not have that subtree yet. A subtree with content is kept: a restarted session keeps
+ * the packages it added. A subtree left empty by a failed clone is retried on the next start, and
+ * without a usable seed the dirs start empty, so pnpm downloads as usual.
  */
 export function seedPnpmCopy(seedDir: string, copyDir: string): SeedResult {
-  if (existsSync(join(copyDir, 'store'))) return { seeded: false, reason: 'already present' };
   mkdirSync(dirname(copyDir), { recursive: true });
   mkdirSync(copyDir, { recursive: true });
-  let result: SeedResult = { seeded: true };
+
+  // Content means "this subtree is the session's now", whether it came from the seed or from the
+  // session's own installs. An empty dir is what a failed clone leaves behind, so it gets retried.
+  const pending = SUBTREES.filter((sub) => isEmpty(join(copyDir, sub)));
+  if (pending.length === 0) return { seeded: false, reason: 'already present' };
+
+  let seed: string;
   try {
     // Resolve once, so a seed rebuilt and swapped in meanwhile can't mix two versions.
-    const seed = realpathSync(seedDir);
-    for (const sub of ['cache', 'store']) cloneTree(join(seed, sub), join(copyDir, sub));
+    seed = realpathSync(seedDir);
   } catch (err) {
-    result = { seeded: false, reason: `unseeded: ${(err as Error).message}` };
+    for (const sub of pending) mkdirSync(join(copyDir, sub), { recursive: true });
+    return { seeded: false, reason: `unseeded: ${(err as Error).message}` };
   }
-  for (const sub of ['cache', 'store']) mkdirSync(join(copyDir, sub), { recursive: true });
-  return result;
+
+  let seeded = false;
+  const failures: string[] = [];
+  for (const sub of pending) {
+    const target = join(copyDir, sub);
+    const staged = `${target}.partial`;
+    try {
+      rmSync(staged, { recursive: true, force: true });
+      cloneTree(join(seed, sub), staged);
+      // Publish only a complete subtree, and only over the empty dir checked above.
+      rmSync(target, { recursive: true, force: true });
+      renameSync(staged, target);
+      seeded = true;
+    } catch (err) {
+      rmSync(staged, { recursive: true, force: true });
+      mkdirSync(target, { recursive: true });
+      failures.push(`${sub}: ${(err as Error).message}`);
+    }
+  }
+  return failures.length === 0 ? { seeded } : { seeded, reason: `unseeded: ${failures.join('; ')}` };
 }
+
+/** True when the path is missing or an empty directory. */
+function isEmpty(dir: string): boolean {
+  if (!existsSync(dir)) return true;
+  try {
+    return readdirSync(dir).length === 0;
+  } catch {
+    // Unreadable means someone else's data: never treat it as ours to replace.
+    return false;
+  }
+}
+
