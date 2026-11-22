@@ -2,6 +2,10 @@
 
 All notable changes to this package. It follows [Semantic Versioning](https://semver.org).
 
+## Unreleased
+
+- Fix: `pnpm install` failed in every session with `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` ("Operation not permitted"). pnpm 12 keeps its lock dirs in `$XDG_RUNTIME_DIR`, else a hard-coded `/tmp`, which the sandbox can't write. Every command now gets `XDG_RUNTIME_DIR` set to its private `TMPDIR`. No new write access.
+
 ## 0.1.1 (2026-11-22)
 
 - README: the comparison table leads with this package and lists the template default before Mastra's Seatbelt mode, with status markers.

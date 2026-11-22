@@ -21,13 +21,17 @@ export function safeId(id: string): string {
  * Env arrives on stdin as `export` lines, so values never appear on a command line (which any
  * local user can read with `ps`). It is read from fd 0 with `cat`, because Seatbelt denies opening
  * `/dev/stdin` by path. An optional timeout is a perl `alarm` that kills the command.
+ *
+ * `XDG_RUNTIME_DIR` is set to the private `TMPDIR` after the env, so nothing can point it
+ * elsewhere. Tools that keep runtime locks there otherwise fall back to a hard-coded `/tmp`, which
+ * the sandbox can't write: pnpm 12 fails every install with ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK.
  */
 export function buildCommandScript(command: string, args: readonly string[], timeoutSecs: number): string {
   const argv = [command, ...args].map(shq).join(' ');
   const run = timeoutSecs > 0
     ? `exec /usr/bin/perl -e 'alarm shift; exec @ARGV or die $!' ${timeoutSecs} ${argv}`
     : `exec ${argv}`;
-  return `eval "$(cat)"; ${run} </dev/null`;
+  return `eval "$(cat)"; export XDG_RUNTIME_DIR="$TMPDIR"; ${run} </dev/null`;
 }
 
 /** `export NAME='value'` lines for every valid name with a string value. */
