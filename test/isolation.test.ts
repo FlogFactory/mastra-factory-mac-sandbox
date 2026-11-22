@@ -3,7 +3,7 @@
  * Seatbelt. Every secret here is a fixture in a temporary dir; the real `~/.ssh` is only probed for
  * "can't list it", with output discarded inside the sandbox.
  */
-import { describe, test, before, after } from 'node:test';
+import { describe, test, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
@@ -198,5 +198,85 @@ describe('Seatbelt isolation (macOS)', { skip: skipReason }, () => {
     const bad = new SeatbeltSandbox({ sessionId: 'readable', root: join(dir, 'sandboxes'), denyRead: ['/usr/share'] });
     await assert.rejects(bad.start(), (err: Error) => err instanceof SandboxIsolationError && /\/usr\/share/.test(err.message));
     assert.equal(bad.status, 'error');
+  });
+});
+
+describe('pnpm seed (macOS)', { skip: skipReason }, () => {
+  let dir: string, seed: string, sb: SeatbeltSandbox;
+  const sh = (script: string) => sb.executeCommand('/bin/sh', ['-c', script]);
+
+  before(async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'mfms-seed-it-')));
+    seed = join(dir, 'seed');
+    mkdirSync(join(seed, 'store'), { recursive: true });
+    mkdirSync(join(seed, 'cache'), { recursive: true });
+    writeFileSync(join(seed, 'store', 'marker'), 'from the seed\n');
+    if (hasPnpm) {
+      // A real seed: pnpm fetch, on the host, for a one-dependency project.
+      const proj = join(dir, 'proj');
+      mkdirSync(proj);
+      writeFileSync(join(proj, 'package.json'), '{"name":"p","version":"1.0.0","dependencies":{"is-number":"7.0.0"}}');
+      execFileSync('pnpm', ['install', '--lockfile-only', '--store-dir', join(seed, 'store'), '--cache-dir', join(seed, 'cache')], { cwd: proj, stdio: 'pipe' });
+      execFileSync('pnpm', ['fetch', '--store-dir', join(seed, 'store'), '--cache-dir', join(seed, 'cache')], { cwd: proj, stdio: 'pipe' });
+    }
+    sb = new SeatbeltSandbox({ sessionId: 'seeded', root: join(dir, 'sandboxes'), pnpmSeed: seed, commandTimeoutMs: 120_000 });
+    await sb.start();
+  });
+
+  after(async () => {
+    await sb?.destroy();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('pnpm points at a session copy of the seed, which the session can write', async () => {
+    const copy = join(sb.sessionRoot, '.pnpm');
+    const r = await sh('echo "$pnpm_config_store_dir|$pnpm_config_cache_dir"; cat "$pnpm_config_store_dir/marker"; echo x > "$pnpm_config_store_dir/added" && echo wrote');
+    assert.equal(r.stdout, `${join(copy, 'store')}|${join(copy, 'cache')}\nfrom the seed\nwrote\n`, r.stderr);
+  });
+
+  test('the seed itself is unreadable and unchanged', async () => {
+    const r = await sh(`ls ${seed} >/dev/null 2>&1 && echo readable; echo x > ${join(seed, 'store', 'planted')} 2>/dev/null && echo writable; echo done`);
+    assert.equal(r.stdout, 'done\n');
+    assert.equal(existsSync(join(seed, 'store', 'added')), false);
+    assert.equal(existsSync(join(seed, 'store', 'planted')), false);
+  });
+
+  test('offline pnpm install is served from the seed', { skip: hasPnpm ? false : 'pnpm is not on PATH' }, async () => {
+    execFileSync('cp', [join(dir, 'proj', 'package.json'), join(dir, 'proj', 'pnpm-lock.yaml'), sb.workingDirectory!]);
+    const r = await sh('pnpm install --offline --frozen-lockfile && test -f node_modules/is-number/package.json && echo installed');
+    assert.match(r.stdout, /installed\n$/, r.stdout + r.stderr);
+  });
+
+  test('a restarted session keeps its own copy instead of re-seeding', async () => {
+    await sb.destroy();
+    sb = new SeatbeltSandbox({ sessionId: 'seeded', root: join(dir, 'sandboxes'), pnpmSeed: seed });
+    await sb.start();
+    assert.equal((await sh('cat "$pnpm_config_store_dir/added"')).stdout, 'x\n');
+  });
+
+  test('a seed inside a deny path is refused', () => {
+    assert.throws(
+      () => new SeatbeltSandbox({ sessionId: 'bad-seed', root: join(dir, 'sandboxes'), pnpmSeed: join(homedir(), '.ssh') }),
+      (err: Error) => err instanceof SandboxIsolationError && /pnpmSeed/.test(err.message),
+    );
+  });
+
+  test('a seed that cannot be used is reported on start, and pnpm still works', async () => {
+    const warn = mock.method(console, 'warn', () => undefined);
+    const missing = join(dir, 'no-seed-yet');
+    const cold = new SeatbeltSandbox({ sessionId: 'unseeded', root: join(dir, 'sandboxes'), pnpmSeed: missing });
+    try {
+      await cold.start();
+      const said = warn.mock.calls.map((c) => String(c.arguments[0])).filter((a) => a.startsWith('pnpmSeed '));
+      assert.equal(said.length, 1, said.join('\n'));
+      assert.match(said[0], /no-seed-yet/);
+      assert.equal(cold.pnpmSeedResult?.seeded, false);
+      assert.match(cold.pnpmSeedResult?.reason ?? '', /no-seed-yet/);
+      const r = await cold.executeCommand('/bin/sh', ['-c', `echo x > "$pnpm_config_store_dir/added" && cat "$pnpm_config_store_dir/added"`]);
+      assert.equal(r.stdout, 'x\n', r.stderr);
+    } finally {
+      warn.mock.restore();
+      await cold.destroy();
+    }
   });
 });

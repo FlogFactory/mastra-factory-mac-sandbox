@@ -9,7 +9,7 @@
  * unreadable from inside, and refuses to start if one is not.
  */
 import { execFileSync } from 'node:child_process';
-import { existsSync, mkdirSync, realpathSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { MastraSandbox } from '@mastra/core/workspace';
@@ -18,6 +18,7 @@ import { createSandbox, type Sandbox } from '@ai-hero/sandcastle';
 import { seatbelt } from '@ai-hero/sandcastle/sandboxes/seatbelt';
 import type { ExecutionLimiter } from './limiter.ts';
 import { buildCommandScript, buildEnvExports, buildReadProbeScript, pickEnv, safeId, shq } from './script.ts';
+import { seedPnpmCopy, type SeedResult } from './seed.ts';
 
 export const DEFAULT_ROOT = join(homedir(), '.factory-sandboxes');
 export const DEFAULT_COMMAND_TIMEOUT_MS = 15 * 60_000;
@@ -50,6 +51,12 @@ export interface SeatbeltSandboxOptions {
   denyRead?: readonly string[];
   /** The execution slot. Omit to run commands without one. */
   limiter?: ExecutionLimiter;
+  /**
+   * A host dir holding a pnpm `store/` and `cache/` (for example filled by `pnpm fetch`). Each
+   * session then gets its own copy-on-write clone of it at `<sessionRoot>/.pnpm`, and pnpm uses that
+   * copy. The seed itself stays unreadable from inside. Default: none, pnpm uses the private HOME.
+   */
+  pnpmSeed?: string;
 }
 
 const within = (p: string, root: string) => p === root || p.startsWith(root.endsWith(sep) ? root : root + sep);
@@ -77,6 +84,7 @@ export class SeatbeltSandbox extends MastraSandbox {
   readonly #env: Record<string, string>;
   readonly #denyRead: string[];
   readonly #limiter?: ExecutionLimiter;
+  readonly #pnpmSeed?: string;
   #sb?: Sandbox;
 
   /** Cheap and side-effect free, as Factory requires: nothing touches disk until start(). */
@@ -99,6 +107,26 @@ export class SeatbeltSandbox extends MastraSandbox {
       }
     }
     this.#denyRead = [...new Set(deny)];
+    if (o.pnpmSeed !== undefined) {
+      if (!isAbsolute(o.pnpmSeed)) throw new Error(`pnpmSeed must be absolute: ${o.pnpmSeed}`);
+      // Sessions get a readable copy of the seed, so it must not be (or hold) anything secret.
+      const rs = real(o.pnpmSeed);
+      for (const p of this.#denyRead) {
+        const rp = real(p);
+        if (within(rs, rp) || within(rp, rs)) throw new SandboxIsolationError(`pnpmSeed ${o.pnpmSeed} overlaps deny path ${p}`);
+      }
+      this.#pnpmSeed = o.pnpmSeed;
+      const copy = join(this.#sessionRoot, '.pnpm');
+      this.#env.pnpm_config_store_dir = join(copy, 'store');
+      this.#env.pnpm_config_cache_dir = join(copy, 'cache');
+    }
+  }
+
+  #pnpmSeedResult?: SeedResult;
+
+  /** Set by start(): whether that start cloned the seed, and why not when it did not. */
+  get pnpmSeedResult(): SeedResult | undefined {
+    return this.#pnpmSeedResult;
   }
 
   get sessionRoot(): string {
@@ -122,10 +150,26 @@ export class SeatbeltSandbox extends MastraSandbox {
       git('-c', 'user.name=factory-sandbox', '-c', 'user.email=sandbox@localhost.invalid', '-c', 'commit.gpgsign=false',
         'commit', '-q', '--allow-empty', '-m', 'session root');
     }
+    const mounts = [];
+    if (this.#pnpmSeed) {
+      const copy = join(this.#sessionRoot, '.pnpm');
+      const exclude = join(this.#sessionRoot, '.git', 'info', 'exclude');
+      if (!(existsSync(exclude) && readFileSync(exclude, 'utf8').includes('/.pnpm/'))) appendFileSync(exclude, '/.pnpm/\n');
+      this.#pnpmSeedResult = seedPnpmCopy(this.#pnpmSeed, copy);
+      const seedResult = this.#pnpmSeedResult;
+      // A configured seed that did not seed is the operator's problem, not the session's: say so
+      // once instead of letting the session run cold without a trace.
+      if (seedResult.reason && seedResult.reason !== 'already present') {
+        console.warn(`pnpmSeed ${this.#pnpmSeed}: ${seedResult.reason}`);
+      }
+
+      // Writable, and only this session's copy: the seed is never mounted.
+      mounts.push({ hostPath: copy, sandboxPath: copy });
+    }
     const sb = await createSandbox({
       cwd: this.#sessionRoot,
       branch: `session/${safeId(this.id)}`,
-      sandbox: seatbelt(),
+      sandbox: seatbelt({ mounts }),
     });
     try {
       await this.#verifyDenyRead(sb);
