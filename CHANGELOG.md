@@ -2,7 +2,7 @@
 
 All notable changes to this package. It follows [Semantic Versioning](https://semver.org).
 
-## Unreleased
+## 0.2.0 (2026-11-23)
 
 - Fix: `pnpm install` failed in every session with `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` ("Operation not permitted"). pnpm 12 keeps its lock dirs in `$XDG_RUNTIME_DIR`, else a hard-coded `/tmp`, which the sandbox can't write. Every command now gets `XDG_RUNTIME_DIR` set to its private `TMPDIR`. No new write access.
 - New `pnpmSeed` option: warm pnpm stores. Each session gets a copy-on-write clone of a host-filled pnpm store and metadata cache at `<sessionRoot>/.pnpm`, so its first `pnpm install` reuses packages instead of downloading them all, and the store no longer takes gigabytes of real disk per session. `store/` and `cache/` are cloned and published one at a time, so a subtree the seed could not provide is retried on the next start instead of being mistaken for an existing copy, and a seed that cannot be used is reported on `start()` rather than leaving the session cold without a trace. Measured in a real session on a 1,009-package workspace: `pnpm install` went from 3m 2.5s (and 2.4 GB of store per session) to 3.9s, plus 7.4s to clone at start, with next to no extra disk.
