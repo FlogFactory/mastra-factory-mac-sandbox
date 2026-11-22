@@ -1,0 +1,39 @@
+# Weekly dependency updates. Every PR runs the required CI jobs, including the real macOS
+# isolation tests, and needs the owner's approval: nothing merges on its own.
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    # Skip versions under a week old: compromised releases are usually pulled within days.
+    # Security updates ignore this.
+    cooldown:
+      default-days: 7
+    # Keep exact pins exact.
+    versioning-strategy: increase
+    commit-message:
+      prefix: deps
+    open-pull-requests-limit: 5
+    # @ai-hero/sandcastle is the security boundary and the only runtime dependency, so it is
+    # in no group: each bump gets its own PR and a patch release.
+    groups:
+      mastra:
+        patterns: ['@mastra/*']
+      typescript-tooling:
+        patterns: ['typescript', '@types/*']
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    cooldown:
+      default-days: 7
+    commit-message:
+      prefix: ci
+    groups:
+      actions:
+        patterns: ['*']
