@@ -60,7 +60,7 @@
     "@mastra/core": "1.85.0",
     "@mastra/factory": "0.30.0",
     "@types/node": "26.6.6",
-    "typescript": "6.0.3"
+    "typescript": "7.0.2"
   },
   "publishConfig": {
     "access": "public",
