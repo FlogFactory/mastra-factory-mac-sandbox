@@ -43,6 +43,9 @@ These are the only commands. Don't add tools or dependencies unless the issue as
 ## Releasing
 The owner releases; agents don't push tags or publish. A release PR only bumps `version` in `package.json` and `package-lock.json` (`npm version <x.y.z> --no-git-tag-version`) and turns the CHANGELOG's `Unreleased` heading into `## <x.y.z> (<date>)`. After it merges, the owner pushes the tag `v<x.y.z>`, and `.github/workflows/release.yml` verifies on macOS and publishes to npm once the owner approves.
 
+## Dependency updates
+Dependabot opens weekly PRs (`.github/dependabot.yml`): `@ai-hero/sandcastle` on its own, the `@mastra/*` packages together, TypeScript tooling together, and GitHub Actions together. `peerDependencies` ranges are a compatibility promise: a Mastra update must not narrow them, and they're widened deliberately when a new Mastra major is supported. A `@ai-hero/sandcastle` bump changes what users install, so it needs a CHANGELOG entry and a patch release.
+
 ## Pull requests
 - One issue per PR. Reference the issue (`Fixes #N`) in the description.
 - `main` is protected: a PR needs an approving review from the owner, who merges.
