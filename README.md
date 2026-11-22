@@ -71,12 +71,12 @@ Tested on macOS with Factory 0.30:
 
 ✅ safe or working · ❌ unsafe or broken · ⚠️ open by design (see [THREAT_MODEL.md](THREAT_MODEL.md))
 
-| Check | This package | Mastra `LocalSandbox`, `isolation: 'seatbelt'` | `LocalFactorySandbox` (template default) |
+| Check | This package | `LocalFactorySandbox` (template default) | Mastra `LocalSandbox`, `isolation: 'seatbelt'` |
 |---|---|---|---|
-| Write outside the session folder | ✅ blocked | ✅ blocked | ❌ allowed |
-| Server env in commands | ✅ not passed | ✅ not passed | ❌ passed |
-| Read the secrets dir, `~/.ssh`, other `.env` | ✅ blocked | ❌ **allowed** | ❌ allowed |
-| `npm` | ✅ works | ❌ fails (can't write its cache) | ✅ works |
+| Write outside the session folder | ✅ blocked | ❌ allowed | ✅ blocked |
+| Server env in commands | ✅ not passed | ❌ passed | ✅ not passed |
+| Read the secrets dir, `~/.ssh`, other `.env` | ✅ blocked | ❌ allowed | ❌ **allowed** |
+| `npm` | ✅ works | ✅ works | ❌ fails (can't write its cache) |
 | `git clone` over HTTPS | ✅ works | ✅ works | ✅ works |
 | Network | ⚠️ open | ⚠️ open | ⚠️ open |
 | Per-command env | ✅ stdin, not argv | ⚠️ process env | ⚠️ process env |
