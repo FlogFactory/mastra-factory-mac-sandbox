@@ -1,0 +1,65 @@
+name: Release
+
+# Publishes to npm when the owner pushes a version tag (vX.Y.Z) for a commit on main.
+# npm trusted publishing: GitHub's OIDC token proves this repo and workflow, so no npm token
+# is stored anywhere, and npm attaches provenance to every release. The `npm` environment
+# waits for the owner's approval before publishing. Only the owner can create v* tags
+# (the "Release tags: owner only" ruleset).
+
+on:
+  push:
+    tags: ['v*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify on macOS
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: npm
+      - name: Tag matches package.json, and the commit is on main
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "$GITHUB_REF_NAME" != "v$version" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $version"; exit 1
+          fi
+          if ! git merge-base --is-ancestor "$GITHUB_SHA" origin/main; then
+            echo "::error::$GITHUB_REF_NAME is not on main"; exit 1
+          fi
+      - run: npm ci
+      - run: npm run check
+      # The real Seatbelt isolation tests run here: CI is set, so they never skip.
+      - run: npm test
+      - run: npm run build
+
+  publish:
+    name: Publish to npm
+    needs: verify
+    runs-on: ubuntu-latest
+    environment: npm
+    permissions:
+      contents: read
+      id-token: write # npm trusted publishing (OIDC) and provenance
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+      # Trusted publishing needs npm 11.5.1 or later.
+      - run: npm install -g npm@11.17.0
+      - run: npm ci
+      # prepublishOnly runs the typecheck and tests again; prepack builds dist/.
+      - run: npm publish

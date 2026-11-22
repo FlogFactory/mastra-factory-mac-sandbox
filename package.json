@@ -1,6 +1,6 @@
 {
   "name": "mastra-factory-mac-sandbox",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "A Sandcastle + macOS Seatbelt sandbox for self-hosted Mastra Factory: agents write only in their worktree and can't read your secrets.",
   "keywords": [
     "mastra",
