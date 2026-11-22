@@ -69,15 +69,17 @@ To share a slot across processes, implement `ExecutionLimiter` (`acquire(req) �
 
 Tested on macOS with Factory 0.30:
 
-| Check | `LocalFactorySandbox` (template default) | Mastra `LocalSandbox`, `isolation: 'seatbelt'` | This package |
+✅ safe or working · ❌ unsafe or broken · ⚠️ open by design (see [THREAT_MODEL.md](THREAT_MODEL.md))
+
+| Check | This package | Mastra `LocalSandbox`, `isolation: 'seatbelt'` | `LocalFactorySandbox` (template default) |
 |---|---|---|---|
-| Write outside the session folder | allowed | blocked | blocked |
-| Server env in commands | passed | not passed | not passed |
-| Read the secrets dir, `~/.ssh`, other `.env` | allowed | **allowed** | blocked |
-| `npm` | works | fails (can't write its cache) | works |
-| `git clone` over HTTPS | works | works | works |
-| Network | open | open | open |
-| Per-command env | process env | process env | stdin, not argv |
+| Write outside the session folder | ✅ blocked | ✅ blocked | ❌ allowed |
+| Server env in commands | ✅ not passed | ✅ not passed | ❌ passed |
+| Read the secrets dir, `~/.ssh`, other `.env` | ✅ blocked | ❌ **allowed** | ❌ allowed |
+| `npm` | ✅ works | ❌ fails (can't write its cache) | ✅ works |
+| `git clone` over HTTPS | ✅ works | ✅ works | ✅ works |
+| Network | ⚠️ open | ⚠️ open | ⚠️ open |
+| Per-command env | ✅ stdin, not argv | ⚠️ process env | ⚠️ process env |
 
 `LocalFactorySandbox` runs commands directly on the host with no OS isolation. Mastra's Seatbelt mode allows all reads ("macOS sandbox limitation" in its profile) and restricts only writes. Sandcastle's profile denies reads by default and allows the system toolchain, your `PATH` dirs and the worktree.
 
