@@ -40,6 +40,9 @@ These are the only commands. Don't add tools or dependencies unless the issue as
 ## Don't touch
 - `LICENSE`, `SECURITY.md`, `.github/workflows/`, `package-lock.json` (except through `npm install` when the issue adds a dependency), `dist/`.
 
+## Releasing
+The owner releases; agents don't push tags or publish. A release PR only bumps `version` in `package.json` and `package-lock.json` (`npm version <x.y.z> --no-git-tag-version`) and turns the CHANGELOG's `Unreleased` heading into `## <x.y.z> (<date>)`. After it merges, the owner pushes the tag `v<x.y.z>`, and `.github/workflows/release.yml` verifies on macOS and publishes to npm once the owner approves.
+
 ## Pull requests
 - One issue per PR. Reference the issue (`Fixes #N`) in the description.
 - `main` is protected: a PR needs an approving review from the owner, who merges.

@@ -2,9 +2,11 @@
 
 All notable changes to this package. It follows [Semantic Versioning](https://semver.org).
 
-## Unreleased
+## 0.1.1 (2026-11-22)
 
+- README: the comparison table leads with this package and lists the template default before Mastra's Seatbelt mode, with status markers.
 - Tests: the macOS isolation tests skip with a clear reason when they're already inside a Seatbelt sandbox that refuses to nest (for example a Factory session), instead of failing. They never skip in CI.
+- Releases are published from GitHub Actions with npm trusted publishing, so each version carries npm provenance.
 
 ## 0.1.0 (2026-11-22)
 
