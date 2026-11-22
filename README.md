@@ -48,6 +48,7 @@ On each session's `start()`, the sandbox runs a probe inside Seatbelt and **refu
 | `passEnv` | `[]` | Names copied from the server's env. Nothing else from the server's env reaches a command. |
 | `factoryDirs` | `[]` | Your Factory's data and secrets dirs. Proved unreadable on start. |
 | `denyRead` | `[]` | More paths to prove unreadable, added to the defaults: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.docker`, `~/.kube`, `~/.config/gh`, `~/.config/gcloud` and the server's `./.env`. |
+| `pnpmSeed` | none | A host dir holding a pnpm `store/` and `cache/`, for example filled by `pnpm fetch --store-dir <seed>/store --cache-dir <seed>/cache` outside the sandbox. Each session gets its own copy-on-write clone at `<sessionRoot>/.pnpm` (one `clonefileat` call, no extra disk until either side changes), and pnpm uses it through `pnpm_config_store_dir` and `pnpm_config_cache_dir`. Packages missing from the seed download into the session's copy; nothing flows back. A restarted session keeps its copy. The seed must be on the same APFS volume as `root`; otherwise sessions start with an empty copy. Must not overlap a deny path. |
 | `limiter` | one shared `ResourceLimiter` | The execution slot (below). Pass `ResourceLimiterOptions`, your own `ExecutionLimiter`, or `false` for none. |
 
 ### The execution slot

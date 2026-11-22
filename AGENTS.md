@@ -7,6 +7,7 @@
 - `src/factory.ts`: `seatbeltFactorySandbox()`, the one-call Factory `sandbox` callback.
 - `src/limiter.ts`: the `ExecutionLimiter` interface and the in-process `ResourceLimiter` (memory, disk, load admission).
 - `src/script.ts`: pure helpers that build the bash script and env exports.
+- `src/seed.ts`: the `pnpmSeed` copy: one-call APFS clone of a host-filled pnpm store and cache into a session.
 - `src/index.ts`: the public API. Anything exported here is public; change it only when the issue asks.
 - Tests: `test/`, using `node:test`. `isolation.test.ts` runs only on macOS and proves the isolation table against real Seatbelt, using temporary fixture dirs; the rest are unit tests that run anywhere.
 - Docs: `README.md`, `THREAT_MODEL.md`, `SECURITY.md`, `CHANGELOG.md`.
