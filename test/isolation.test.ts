@@ -15,7 +15,30 @@ const onMac = process.platform === 'darwin';
 const GiB = 1024 ** 3;
 const SECRET_MARK = 'FIXTURE_SECRET_VALUE_42';
 
-describe('Seatbelt isolation (macOS)', { skip: !onMac && 'macOS only' }, () => {
+/**
+ * True when this process is already inside a Seatbelt sandbox that won't let it apply another
+ * (`sandbox_apply: Operation not permitted`), as in a Factory session or review run. These tests
+ * can't prove anything there; CI's macOS job runs them unsandboxed. Only that exact refusal
+ * counts, so any other `sandbox-exec` failure still fails the tests below.
+ */
+function seatbeltNestingRefused(): boolean {
+  try {
+    execFileSync('/usr/bin/sandbox-exec', ['-p', '(version 1)(allow default)', '/usr/bin/true'], { stdio: 'pipe' });
+    return false;
+  } catch (err) {
+    const stderr = String((err as { stderr?: Buffer }).stderr ?? '');
+    return /sandbox_apply: Operation not permitted/.test(stderr);
+  }
+}
+
+// In CI the job must prove isolation, so never skip there: a refusal fails loudly instead.
+const skipReason = !onMac
+  ? 'macOS only'
+  : !process.env.CI && seatbeltNestingRefused()
+    ? 'already inside a Seatbelt sandbox, which macOS will not nest; CI "Isolation tests (macOS)" runs these'
+    : false;
+
+describe('Seatbelt isolation (macOS)', { skip: skipReason }, () => {
   let dir: string, homeFixture: string, secretsDir: string, otherRepo: string;
   let limiter: ResourceLimiter, sb: SeatbeltSandbox;
   const sh = (script: string, opts: Parameters<SeatbeltSandbox['executeCommand']>[2] = {}) =>
