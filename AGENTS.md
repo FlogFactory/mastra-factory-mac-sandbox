@@ -14,6 +14,7 @@
 ## Commands
 Node 22.18 or later (TypeScript runs directly through Node's type stripping). Install with `npm ci`.
 - `npm test`: all tests. The macOS isolation tests need network (`git clone`, `npm view`). Run it before opening a PR.
+  - Inside a Factory session the isolation tests skip themselves: macOS won't nest Seatbelt, so they can't run in Factory's own sandbox. CI's `Isolation tests (macOS)` job is the proof for a change; check it passed on the PR's head. Never work around the skip (no weaker profile, no running outside the sandbox).
 - `npm run check`: typecheck (`tsc --noEmit`). Run it before opening a PR.
 - `npm run build`: compile to `dist/` for publishing.
 

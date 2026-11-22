@@ -2,6 +2,10 @@
 
 All notable changes to this package. It follows [Semantic Versioning](https://semver.org).
 
+## Unreleased
+
+- Tests: the macOS isolation tests skip with a clear reason when they're already inside a Seatbelt sandbox that refuses to nest (for example a Factory session), instead of failing. They never skip in CI.
+
 ## 0.1.0 (2026-11-22)
 
 First version.
