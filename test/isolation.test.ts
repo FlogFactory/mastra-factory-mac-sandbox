@@ -5,7 +5,7 @@
  */
 import { describe, test, before, after, mock } from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { homedir, tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { execFileSync } from 'node:child_process';
@@ -198,6 +198,192 @@ describe('Seatbelt isolation (macOS)', { skip: skipReason }, () => {
     const bad = new SeatbeltSandbox({ sessionId: 'readable', root: join(dir, 'sandboxes'), denyRead: ['/usr/share'] });
     await assert.rejects(bad.start(), (err: Error) => err instanceof SandboxIsolationError && /\/usr\/share/.test(err.message));
     assert.equal(bad.status, 'error');
+  });
+});
+
+/**
+ * Factory 0.30.0's `dist/routes/fs.js` scripts, verbatim. They call `mktemp`
+ * with no template, so they are the real regression: each one broke inside a
+ * session sandbox before the shim existed.
+ */
+const FACTORY_WORKSPACE_DIFF_SCRIPT = `
+set -e
+workdir=$1
+base=$2
+shift 2
+index_file=$(mktemp)
+untracked_file=$(mktemp)
+object_dir=$(mktemp -d)
+trap 'rm -f "$index_file" "$untracked_file"; rm -rf "$object_dir"' EXIT
+rm -f "$index_file"
+git -C "$workdir" -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames "$@" "$base"
+git -C "$workdir" ls-files --others --exclude-standard -z >"$untracked_file"
+git_dir=$(git -C "$workdir" rev-parse --absolute-git-dir)
+export GIT_INDEX_FILE="$index_file"
+export GIT_OBJECT_DIRECTORY="$object_dir"
+export GIT_ALTERNATE_OBJECT_DIRECTORIES="$git_dir/objects"
+git -C "$workdir" read-tree --empty
+git -C "$workdir" update-index --add -z --stdin <"$untracked_file"
+empty_tree=$(git -C "$workdir" hash-object -t tree /dev/null)
+git -C "$workdir" -c core.quotePath=false diff --cached --no-ext-diff --no-textconv "$@" "$empty_tree"
+`;
+
+const FACTORY_BOUNDED_OUTPUT_SCRIPT = `
+limit=$1
+shift
+status_file=$(mktemp)
+trap 'rm -f "$status_file"' EXIT
+(
+  "$@"
+  printf '%s' "$?" >"$status_file"
+) | head -c "$limit"
+status=$(cat "$status_file")
+case "$status" in
+  0|141) exit 0 ;;
+esac
+exit "\${status:-1}"
+`;
+
+const FACTORY_READ_FILE_PREFIX_SCRIPT = `t=$(mktemp) && trap 'rm -f "$t"' EXIT && head -c "$1" -- "$2" >"$t" && base64 <"$t"`;
+
+const FACTORY_SPECIAL_ENTRIES_SCRIPT = `
+set -e
+cd "$1"
+staged=$(mktemp)
+untracked=$(mktemp)
+trap 'rm -f "$staged" "$untracked"' EXIT
+git ls-files -z --stage >"$staged"
+git ls-files -z --others --exclude-standard >"$untracked"
+grep -z '^1[26]0000 ' "$staged" || [ $? -eq 1 ]
+xargs -0 sh -c 'for p; do if [ -L "$p" ]; then printf "120000 untracked\\\\t%s\\\\0" "$p"; fi; done' sh <"$untracked"
+`;
+
+describe('mktemp shim (macOS)', { skip: skipReason }, () => {
+  let dir: string, sb: SeatbeltSandbox, other: SeatbeltSandbox | undefined;
+  let base = '';
+  const sh = (script: string) => sb.executeCommand('/bin/sh', ['-c', script]);
+  const run = (script: string, name: string, ...args: string[]) =>
+    sb.executeCommand('/bin/sh', ['-c', script, name, ...args]);
+
+  before(async () => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'mfms-mktemp-it-')));
+    sb = new SeatbeltSandbox({ sessionId: 'mktemp', root: join(dir, 'sandboxes'), commandTimeoutMs: 120_000 });
+    await sb.start();
+    const setup = await sh(
+      [
+        'set -e',
+        'git init -q repo',
+        'cd repo',
+        'git config user.email a@b',
+        'git config user.name a',
+        'echo one > tracked.txt',
+        'git add tracked.txt',
+        'git commit -qm one',
+        'echo two >> tracked.txt',
+        'echo new > untracked.txt',
+      ].join('\n'),
+    );
+    assert.equal(setup.success, true, setup.stderr);
+    base = (await sh('git -C repo rev-parse HEAD')).stdout.trim();
+  });
+
+  after(async () => {
+    await sb?.destroy();
+    await other?.destroy();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('bare, -d and -t calls succeed and land in the private TMPDIR', async () => {
+    const r = await sh('set -e\nf=$(mktemp)\nd=$(mktemp -d)\nt=$(mktemp -t probe)\nprintf "%s\\n" "$f" "$d" "$t" "$TMPDIR"');
+    assert.equal(r.success, true, r.stderr);
+    const [file, madeDir, prefixed, tmp] = r.stdout.trim().split('\n') as [string, string, string, string];
+    assert.ok(file.startsWith(`${tmp}/`), file);
+    assert.ok(madeDir.startsWith(`${tmp}/`), madeDir);
+    assert.ok(prefixed.startsWith(`${tmp}/probe.`), prefixed);
+    assert.equal((await sh(`test -d ${madeDir}`)).success, true);
+  });
+
+  test('the shim is first on PATH and cannot be rewritten from inside', async () => {
+    const bin = join(sb.sessionRoot, '.bin');
+    const r = await sh('command -v mktemp; printf %s "$PATH"');
+    const [found, path] = r.stdout.split('\n') as [string, string];
+    assert.equal(found, join(bin, 'mktemp'));
+    assert.equal(path.split(':')[0], bin);
+    assert.equal(statSync(join(bin, 'mktemp')).mode & 0o777, 0o755);
+    assert.equal((await sh(`echo x > ${join(bin, 'mktemp')}`)).success, false);
+  });
+
+  test('an explicit template is still honoured', async () => {
+    const r = await sh('set -e\nmktemp "$TMPDIR/explicit.XXXXXX"');
+    assert.equal(r.success, true, r.stderr);
+    assert.match(r.stdout.trim(), /\/explicit\.[A-Za-z0-9]+$/);
+  });
+
+  test("Factory 0.30.0's WORKSPACE_DIFF_SCRIPT produces a patch", async () => {
+    const r = await run(
+      FACTORY_WORKSPACE_DIFF_SCRIPT,
+      'mastracode-patch',
+      'repo',
+      base,
+      '--patch',
+      '--no-color',
+      '--unified=3',
+      '--src-prefix=a/',
+      '--dst-prefix=b/',
+    );
+    assert.equal(r.success, true, r.stderr);
+    assert.match(r.stdout, /\+two/);
+    assert.match(r.stdout, /untracked\.txt/);
+  });
+
+  test("Factory 0.30.0's WORKSPACE_DIFF_SCRIPT produces numstat", async () => {
+    const r = await run(FACTORY_WORKSPACE_DIFF_SCRIPT, 'mastracode-numstat', 'repo', base, '--numstat', '-z');
+    assert.equal(r.success, true, r.stderr);
+    assert.match(r.stdout, /tracked\.txt/);
+  });
+
+  test("Factory 0.30.0's BOUNDED_OUTPUT_SCRIPT bounds `git ls-files`", async () => {
+    const r = await run(
+      FACTORY_BOUNDED_OUTPUT_SCRIPT,
+      'mastracode-bounded',
+      '4194305',
+      'git',
+      '-C',
+      'repo',
+      'ls-files',
+      '-z',
+      '--cached',
+      '--others',
+      '--exclude-standard',
+    );
+    assert.equal(r.success, true, r.stderr);
+    assert.match(r.stdout, /tracked\.txt/);
+  });
+
+  test("Factory 0.30.0's readFilePrefix snippet reads a file", async () => {
+    const r = await run(FACTORY_READ_FILE_PREFIX_SCRIPT, 'sh', '6', 'repo/untracked.txt');
+    assert.equal(r.success, true, r.stderr);
+    assert.equal(Buffer.from(r.stdout.trim(), 'base64').toString(), 'new\n');
+  });
+
+  test("Factory 0.30.0's SPECIAL_ENTRIES_SCRIPT lists a repo", async () => {
+    const r = await run(FACTORY_SPECIAL_ENTRIES_SCRIPT, 'mastracode-special-entries', 'repo');
+    assert.equal(r.success, true, r.stderr);
+  });
+
+  test('the shared per-user temp dir stays unwritable', async () => {
+    const r = await sh('d=$(getconf DARWIN_USER_TEMP_DIR); echo x > "$d/mfms-planted" 2>/dev/null && echo wrote; echo done');
+    assert.equal(r.stdout, 'done\n', r.stderr);
+    assert.equal(existsSync(join(execFileSync('getconf', ['DARWIN_USER_TEMP_DIR'], { encoding: 'utf8' }).trim(), 'mfms-planted')), false);
+  });
+
+  test("another session's TMPDIR is unreadable", async () => {
+    const mine = (await sh('printf %s "$TMPDIR"')).stdout;
+    other = new SeatbeltSandbox({ sessionId: 'mktemp-other', root: join(dir, 'sandboxes'), commandTimeoutMs: 120_000 });
+    await other.start();
+    const r = await other.executeCommand('/bin/sh', ['-c', `ls ${mine} >/dev/null 2>&1 && echo readable; echo done`]);
+    assert.equal(r.stdout, 'done\n', r.stderr);
+    assert.notEqual((await other.executeCommand('/bin/sh', ['-c', 'printf %s "$TMPDIR"'])).stdout, mine);
   });
 });
 

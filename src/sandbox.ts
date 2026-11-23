@@ -9,15 +9,15 @@
  * unreadable from inside, and refuses to start if one is not.
  */
 import { execFileSync } from 'node:child_process';
-import { appendFileSync, existsSync, mkdirSync, readFileSync, realpathSync } from 'node:fs';
+import { appendFileSync, chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { isAbsolute, join, resolve, sep } from 'node:path';
 import { MastraSandbox } from '@mastra/core/workspace';
 import type { CommandResult, ExecuteCommandOptions, ProviderStatus } from '@mastra/core/workspace';
-import { createSandbox, type Sandbox } from '@ai-hero/sandcastle';
+import { createSandbox, type MountConfig, type Sandbox } from '@ai-hero/sandcastle';
 import { seatbelt } from '@ai-hero/sandcastle/sandboxes/seatbelt';
 import type { ExecutionLimiter } from './limiter.ts';
-import { buildCommandScript, buildEnvExports, buildReadProbeScript, pickEnv, safeId, shq } from './script.ts';
+import { buildCommandScript, buildEnvExports, buildMktempShim, buildReadProbeScript, pickEnv, safeId, shq } from './script.ts';
 import { seedPnpmCopy, type SeedResult } from './seed.ts';
 
 export const DEFAULT_ROOT = join(homedir(), '.factory-sandboxes');
@@ -61,6 +61,12 @@ export interface SeatbeltSandboxOptions {
 
 const within = (p: string, root: string) => p === root || p.startsWith(root.endsWith(sep) ? root : root + sep);
 
+/** Keep a session-internal dir out of `git status` in the session root. */
+function excludeFromSessionRoot(sessionRoot: string, pattern: string): void {
+  const exclude = join(sessionRoot, '.git', 'info', 'exclude');
+  if (!(existsSync(exclude) && readFileSync(exclude, 'utf8').includes(pattern))) appendFileSync(exclude, `${pattern}\n`);
+}
+
 /** Resolve symlinks where the path exists, so checks compare real paths. */
 function real(p: string): string {
   const abs = resolve(p);
@@ -80,6 +86,7 @@ export class SeatbeltSandbox extends MastraSandbox {
   preservedWorktreePath?: string;
 
   readonly #sessionRoot: string;
+  readonly #binDir: string;
   readonly #timeoutMs: number;
   readonly #env: Record<string, string>;
   readonly #denyRead: string[];
@@ -93,6 +100,7 @@ export class SeatbeltSandbox extends MastraSandbox {
     this.id = o.sessionId;
     const root = resolve(o.root ?? DEFAULT_ROOT);
     this.#sessionRoot = join(root, safeId(o.sessionId));
+    this.#binDir = join(this.#sessionRoot, '.bin');
     this.#timeoutMs = o.commandTimeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
     if (!(this.#timeoutMs > 0)) throw new Error('commandTimeoutMs must be positive');
     this.#env = { ...DEFAULT_ENV, ...pickEnv(o.passEnv ?? [], process.env), ...o.env };
@@ -150,11 +158,19 @@ export class SeatbeltSandbox extends MastraSandbox {
       git('-c', 'user.name=factory-sandbox', '-c', 'user.email=sandbox@localhost.invalid', '-c', 'commit.gpgsign=false',
         'commit', '-q', '--allow-empty', '-m', 'session root');
     }
-    const mounts = [];
+    // The `mktemp` shim. macOS creates a template-less (or `-t`) temp file outside `$TMPDIR`,
+    // which the profile denies, so commands get a shim first on `PATH`. It is written before the
+    // sandbox exists because Sandcastle drops a mount whose path is not there yet, and mounted
+    // read-only so the session gains no writable path and cannot replace it.
+    mkdirSync(this.#binDir, { recursive: true });
+    const shim = join(this.#binDir, 'mktemp');
+    writeFileSync(shim, buildMktempShim());
+    chmodSync(shim, 0o755);
+    excludeFromSessionRoot(this.#sessionRoot, '/.bin/');
+    const mounts: MountConfig[] = [{ hostPath: this.#binDir, sandboxPath: this.#binDir, readonly: true }];
     if (this.#pnpmSeed) {
       const copy = join(this.#sessionRoot, '.pnpm');
-      const exclude = join(this.#sessionRoot, '.git', 'info', 'exclude');
-      if (!(existsSync(exclude) && readFileSync(exclude, 'utf8').includes('/.pnpm/'))) appendFileSync(exclude, '/.pnpm/\n');
+      excludeFromSessionRoot(this.#sessionRoot, '/.pnpm/');
       this.#pnpmSeedResult = seedPnpmCopy(this.#pnpmSeed, copy);
       const seedResult = this.#pnpmSeedResult;
       // A configured seed that did not seed is the operator's problem, not the session's: say so
@@ -210,7 +226,7 @@ export class SeatbeltSandbox extends MastraSandbox {
     });
     const t = Date.now();
     try {
-      const r = await sb.exec(`/bin/bash -c ${shq(buildCommandScript(command, args, secs))}`, {
+      const r = await sb.exec(`/bin/bash -c ${shq(buildCommandScript(command, args, secs, this.#binDir))}`, {
         cwd: options.cwd ?? this.workingDirectory,
         stdin: buildEnvExports(env) + '\n',
         onLine: options.onStdout ? (line: string) => options.onStdout!(line + '\n') : undefined,
@@ -237,6 +253,6 @@ export class SeatbeltSandbox extends MastraSandbox {
   }
 
   getInstructions(): string {
-    return 'Commands run in a macOS Seatbelt sandbox. You can write only inside the working directory and a private TMPDIR and HOME. Files outside them, including the server user\'s home, are unreadable. `ps` is not permitted. The network is open.';
+    return 'Commands run in a macOS Seatbelt sandbox. You can write only inside the working directory and a private TMPDIR and HOME. Files outside them, including the server user\'s home, are unreadable. `ps` is not permitted. The network is open. `mktemp` (with or without `-d`/`-t`) creates its file in `TMPDIR`.';
   }
 }
