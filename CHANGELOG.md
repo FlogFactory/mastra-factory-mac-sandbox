@@ -2,6 +2,10 @@
 
 All notable changes to this package. It follows [Semantic Versioning](https://semver.org).
 
+## Unreleased
+
+- Fix: `mktemp` failed inside sessions ("mkstemp failed on /var/folders/… Operation not permitted"), which broke anything that shells out to it — in Factory 0.30 that is the Changes panel's diffs and file contents. macOS `mktemp` ignores `$TMPDIR` when no template is given and writes to the per-user temp dir, which the sandbox denies. Each session now gets a read-only `mktemp` shim at `<sessionRoot>/.bin`, put first on `PATH`; bare `mktemp`, `mktemp -d` and `mktemp -t prefix` create their file in the session's private `TMPDIR`, and an explicit template, `-p`, `--suffix` or `--` is handed to the system `mktemp` unchanged. No new write access: the shim dir is mounted read-only and the shared per-user temp dir stays denied.
+
 ## 0.2.0 (2026-11-23)
 
 - Fix: `pnpm install` failed in every session with `ERR_PNPM_STORE_DIR_OPEN_OPERATION_LOCK` ("Operation not permitted"). pnpm 12 keeps its lock dirs in `$XDG_RUNTIME_DIR`, else a hard-coded `/tmp`, which the sandbox can't write. Every command now gets `XDG_RUNTIME_DIR` set to its private `TMPDIR`. No new write access.

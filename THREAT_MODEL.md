@@ -10,9 +10,9 @@
 
 | Threat | How |
 |---|---|
-| Reading the Factory's secrets or data | Sandcastle's Seatbelt profile denies file reads by default. Allowed: system dirs (`/bin`, `/usr`, `/System`, `/Library`, `/opt`, parts of `/private`), each `PATH` dir (never the home dir or an ancestor of it), the worktree, and a private `HOME` and `TMPDIR`. `start()` proves `factoryDirs`, `denyRead` and the defaults are unreadable, and refuses to start otherwise. |
+| Reading the Factory's secrets or data | Sandcastle's Seatbelt profile denies file reads by default. Allowed: system dirs (`/bin`, `/usr`, `/System`, `/Library`, `/opt`, parts of `/private`), each `PATH` dir (never the home dir or an ancestor of it), the worktree, the session's read-only `.bin` (the `mktemp` shim), and a private `HOME` and `TMPDIR`. `start()` proves `factoryDirs`, `denyRead` and the defaults are unreadable, and refuses to start otherwise. |
 | Reading `~/.ssh`, cloud credentials, other `.env` files | Same deny-by-default rule; the home dir isn't readable. |
-| Writing outside the worktree (planting a launch agent, editing another repo, changing the Factory) | Writes are allowed only in the worktree, its git dirs, the private `HOME` and `TMPDIR`, and (with `pnpmSeed`) the session's own pnpm copy at `<sessionRoot>/.pnpm`. Git control files Sandcastle marks read-only stay read-only. |
+| Writing outside the worktree (planting a launch agent, editing another repo, changing the Factory) | Writes are allowed only in the worktree, its git dirs, the private `HOME` and `TMPDIR`, and (with `pnpmSeed`) the session's own pnpm copy at `<sessionRoot>/.pnpm`. Git control files Sandcastle marks read-only stay read-only, and so does the session's `mktemp` shim in `<sessionRoot>/.bin`. |
 | Poisoning other sessions' packages (with `pnpmSeed`) | The seed is never mounted: the host clones it into each session's own `.pnpm` before the sandbox starts, so a session can neither read nor write the seed, and what it writes into its copy reaches no other session. Whoever fills the seed decides what sessions start with, so fill it outside any sandbox from trusted lockfiles. A seed that overlaps a deny path is refused. |
 | Secrets leaking through the environment | Commands get only `env`, `passEnv` names, Factory's runtime env and the per-command env. The server's own env never reaches them. |
 | Secrets leaking through `ps` | Per-command env is written to the command's stdin as `export` lines, never put in argv. |
@@ -47,5 +47,6 @@ Apple marks `sandbox-exec` and the Seatbelt profile language deprecated, and doc
 - `.env` files in other dirs can't be read;
 - the server's env isn't passed, and per-command env never shows in `ps`;
 - `git clone` over HTTPS and `npm view` work;
+- bare `mktemp`, `mktemp -d` and `mktemp -t prefix` write into the session's private `TMPDIR`, the shim is first on `PATH` and can't be rewritten, an explicit template still works, the shared per-user temp dir stays unwritable, one session's `TMPDIR` can't be listed from another, and Factory-shaped scratch-file scripts run cleanly;
 - `start()` refuses when a deny path is readable;
 - with `pnpmSeed`, the session writes only its own copy, the seed stays unreadable and unchanged, and a seed inside a deny path is refused.

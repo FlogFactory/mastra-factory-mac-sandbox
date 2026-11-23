@@ -3,6 +3,7 @@
 A session sandbox for a self-hosted [Mastra Factory](https://factory.mastra.ai) on a Mac. Every command an agent runs goes through [Sandcastle](https://github.com/ai-hero-dev/sandcastle)'s macOS Seatbelt provider, so agents:
 
 - write only inside their session's worktree (plus a private `HOME` and `TMPDIR`);
+- get a `mktemp` that works (macOS's own writes to a shared temp dir the sandbox denies), so tools that shell out to it keep working;
 - **can't read** `~/.ssh`, your Factory's secrets and data dirs, or `.env` files in other projects;
 - get an allow-listed environment, never the server's own; per-command credentials (Factory's GitHub token) arrive on stdin, never on a command line;
 - keep the network, so `git clone`, `npm install` and `pnpm install` work;
@@ -35,6 +36,14 @@ export const sandbox = seatbeltFactorySandbox({
 In `src/mastra/index.ts`, pass it as the Factory's `sandbox` option in place of the template's `LocalFactorySandbox`.
 
 On each session's `start()`, the sandbox runs a probe inside Seatbelt and **refuses to start** if any deny path (the defaults plus `factoryDirs` and `denyRead`) can be read.
+
+### `mktemp`
+
+macOS `mktemp` without a template ignores `$TMPDIR`: it writes to the per-user temp dir (`/var/folders/…/T`), which the sandbox denies because that dir is shared. Any tool that shells out to bare `mktemp` therefore failed inside a session; in Factory 0.30 that is the Changes panel's diffs and file contents.
+
+Each session gets a read-only `mktemp` shim at `<sessionRoot>/.bin`, first on `PATH`. Bare `mktemp`, `mktemp -d`, `mktemp -t prefix` (and `-q`/`-u`) create their file under the session's private `TMPDIR`. Anything else — an explicit template, `-p`, `--suffix`, `--`, an unknown flag — goes to the system `mktemp` unchanged, so the shim never changes a call it doesn't understand.
+
+It is a convenience, not a security boundary: a command that sets `PATH` itself, calls `/usr/bin/mktemp` directly, or overwrites the shim's directory would bypass it. The shim dir is mounted read-only, so the session can't rewrite the shim, and the shared per-user temp dir stays denied. Point `MKTEMP_REAL` at another binary to replace the one it delegates to (that is the test seam).
 
 ## Options
 
