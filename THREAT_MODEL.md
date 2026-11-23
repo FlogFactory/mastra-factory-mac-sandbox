@@ -47,6 +47,6 @@ Apple marks `sandbox-exec` and the Seatbelt profile language deprecated, and doc
 - `.env` files in other dirs can't be read;
 - the server's env isn't passed, and per-command env never shows in `ps`;
 - `git clone` over HTTPS and `npm view` work;
-- bare `mktemp`, `mktemp -d` and `mktemp -t prefix` write into the session's private `TMPDIR`, the shim is first on `PATH` and can't be rewritten, an explicit template still works, the shared per-user temp dir stays unwritable, one session's `TMPDIR` can't be listed from another, and Factory-shaped scratch-file scripts run cleanly;
+- bare `mktemp`, `mktemp -d` and `mktemp -t prefix` write into the session's private `TMPDIR`, the shim is first on `PATH` and can't be rewritten, an explicit template still works, the shared per-user temp dir stays unwritable, one session's `TMPDIR` can't be listed from another, and Factory 0.30.0's four workspace scripts — `WORKSPACE_DIFF_SCRIPT`, `BOUNDED_OUTPUT_SCRIPT`, `readFilePrefix`'s snippet and `SPECIAL_ENTRIES_SCRIPT` — run verbatim and exit 0;
 - `start()` refuses when a deny path is readable;
 - with `pnpmSeed`, the session writes only its own copy, the seed stays unreadable and unchanged, and a seed inside a deny path is refused.

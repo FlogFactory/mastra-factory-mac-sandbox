@@ -23,4 +23,4 @@ export {
   type ResourceProbe,
   type ResourceLimiterOptions,
 } from './limiter.ts';
-export { shq, safeId, buildCommandScript, buildMktempShim, buildEnvExports, pickEnv } from './script.ts';
+export { shq, safeId, buildCommandScript, buildEnvExports, pickEnv } from './script.ts';

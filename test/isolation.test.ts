@@ -201,14 +201,90 @@ describe('Seatbelt isolation (macOS)', { skip: skipReason }, () => {
   });
 });
 
+/**
+ * Factory 0.30.0's `dist/routes/fs.js` scripts, verbatim. They call `mktemp`
+ * with no template, so they are the real regression: each one broke inside a
+ * session sandbox before the shim existed.
+ */
+const FACTORY_WORKSPACE_DIFF_SCRIPT = `
+set -e
+workdir=$1
+base=$2
+shift 2
+index_file=$(mktemp)
+untracked_file=$(mktemp)
+object_dir=$(mktemp -d)
+trap 'rm -f "$index_file" "$untracked_file"; rm -rf "$object_dir"' EXIT
+rm -f "$index_file"
+git -C "$workdir" -c core.quotePath=false diff --no-ext-diff --no-textconv --find-renames "$@" "$base"
+git -C "$workdir" ls-files --others --exclude-standard -z >"$untracked_file"
+git_dir=$(git -C "$workdir" rev-parse --absolute-git-dir)
+export GIT_INDEX_FILE="$index_file"
+export GIT_OBJECT_DIRECTORY="$object_dir"
+export GIT_ALTERNATE_OBJECT_DIRECTORIES="$git_dir/objects"
+git -C "$workdir" read-tree --empty
+git -C "$workdir" update-index --add -z --stdin <"$untracked_file"
+empty_tree=$(git -C "$workdir" hash-object -t tree /dev/null)
+git -C "$workdir" -c core.quotePath=false diff --cached --no-ext-diff --no-textconv "$@" "$empty_tree"
+`;
+
+const FACTORY_BOUNDED_OUTPUT_SCRIPT = `
+limit=$1
+shift
+status_file=$(mktemp)
+trap 'rm -f "$status_file"' EXIT
+(
+  "$@"
+  printf '%s' "$?" >"$status_file"
+) | head -c "$limit"
+status=$(cat "$status_file")
+case "$status" in
+  0|141) exit 0 ;;
+esac
+exit "\${status:-1}"
+`;
+
+const FACTORY_READ_FILE_PREFIX_SCRIPT = `t=$(mktemp) && trap 'rm -f "$t"' EXIT && head -c "$1" -- "$2" >"$t" && base64 <"$t"`;
+
+const FACTORY_SPECIAL_ENTRIES_SCRIPT = `
+set -e
+cd "$1"
+staged=$(mktemp)
+untracked=$(mktemp)
+trap 'rm -f "$staged" "$untracked"' EXIT
+git ls-files -z --stage >"$staged"
+git ls-files -z --others --exclude-standard >"$untracked"
+grep -z '^1[26]0000 ' "$staged" || [ $? -eq 1 ]
+xargs -0 sh -c 'for p; do if [ -L "$p" ]; then printf "120000 untracked\\\\t%s\\\\0" "$p"; fi; done' sh <"$untracked"
+`;
+
 describe('mktemp shim (macOS)', { skip: skipReason }, () => {
   let dir: string, sb: SeatbeltSandbox, other: SeatbeltSandbox | undefined;
+  let base = '';
   const sh = (script: string) => sb.executeCommand('/bin/sh', ['-c', script]);
+  const run = (script: string, name: string, ...args: string[]) =>
+    sb.executeCommand('/bin/sh', ['-c', script, name, ...args]);
 
   before(async () => {
     dir = realpathSync(mkdtempSync(join(tmpdir(), 'mfms-mktemp-it-')));
     sb = new SeatbeltSandbox({ sessionId: 'mktemp', root: join(dir, 'sandboxes'), commandTimeoutMs: 120_000 });
     await sb.start();
+    const setup = await sh(
+      [
+        'set -e',
+        'git init -q repo',
+        'cd repo',
+        'git config user.email a@b',
+        'git config user.name a',
+        'echo one > tracked.txt',
+        'git add tracked.txt',
+        'git commit -qm one',
+        'echo two >> tracked.txt',
+        'echo new > untracked.txt',
+      ].join('\n'),
+    );
+    assert.equal(setup.success, true, setup.stderr);
+    base = (await sh('git -C repo rev-parse HEAD')).stdout.trim();
   });
 
   after(async () => {
@@ -243,32 +319,56 @@ describe('mktemp shim (macOS)', { skip: skipReason }, () => {
     assert.match(r.stdout.trim(), /\/explicit\.[A-Za-z0-9]+$/);
   });
 
-  test("Factory 0.30.0's scratch-file scripts run in a fresh repo", async () => {
-    const r = await sh(
-      [
-        'set -e',
-        'mkdir repo && cd repo',
-        'git init -q',
-        'git -c user.email=a@b -c user.name=a commit -q --allow-empty -m init',
-        'echo one > tracked.txt',
-        'git add tracked.txt && git -c user.email=a@b -c user.name=a commit -qm add',
-        'echo two >> tracked.txt',
-        'echo new > untracked.txt',
-        'index_file=$(mktemp)',
-        'untracked_file=$(mktemp)',
-        'object_dir=$(mktemp -d)',
-        'export GIT_INDEX_FILE="$index_file" GIT_OBJECT_DIRECTORY="$object_dir"',
-        'git add -A',
-        'git --no-pager diff --cached --no-color -- tracked.txt',
-        'wc -l < "$untracked_file"',
-        't=$(mktemp)',
-        'head -c 6 untracked.txt > "$t"',
-        'cat "$t"',
-      ].join('\n'),
+  test("Factory 0.30.0's WORKSPACE_DIFF_SCRIPT produces a patch", async () => {
+    const r = await run(
+      FACTORY_WORKSPACE_DIFF_SCRIPT,
+      'mastracode-patch',
+      'repo',
+      base,
+      '--patch',
+      '--no-color',
+      '--unified=3',
+      '--src-prefix=a/',
+      '--dst-prefix=b/',
     );
     assert.equal(r.success, true, r.stderr);
     assert.match(r.stdout, /\+two/);
-    assert.match(r.stdout, /\nnew\n$/);
+    assert.match(r.stdout, /untracked\.txt/);
+  });
+
+  test("Factory 0.30.0's WORKSPACE_DIFF_SCRIPT produces numstat", async () => {
+    const r = await run(FACTORY_WORKSPACE_DIFF_SCRIPT, 'mastracode-numstat', 'repo', base, '--numstat', '-z');
+    assert.equal(r.success, true, r.stderr);
+    assert.match(r.stdout, /tracked\.txt/);
+  });
+
+  test("Factory 0.30.0's BOUNDED_OUTPUT_SCRIPT bounds `git ls-files`", async () => {
+    const r = await run(
+      FACTORY_BOUNDED_OUTPUT_SCRIPT,
+      'mastracode-bounded',
+      '4194305',
+      'git',
+      '-C',
+      'repo',
+      'ls-files',
+      '-z',
+      '--cached',
+      '--others',
+      '--exclude-standard',
+    );
+    assert.equal(r.success, true, r.stderr);
+    assert.match(r.stdout, /tracked\.txt/);
+  });
+
+  test("Factory 0.30.0's readFilePrefix snippet reads a file", async () => {
+    const r = await run(FACTORY_READ_FILE_PREFIX_SCRIPT, 'sh', '6', 'repo/untracked.txt');
+    assert.equal(r.success, true, r.stderr);
+    assert.equal(Buffer.from(r.stdout.trim(), 'base64').toString(), 'new\n');
+  });
+
+  test("Factory 0.30.0's SPECIAL_ENTRIES_SCRIPT lists a repo", async () => {
+    const r = await run(FACTORY_SPECIAL_ENTRIES_SCRIPT, 'mastracode-special-entries', 'repo');
+    assert.equal(r.success, true, r.stderr);
   });
 
   test('the shared per-user temp dir stays unwritable', async () => {
