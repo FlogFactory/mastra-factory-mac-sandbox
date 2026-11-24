@@ -1,7 +1,7 @@
 /**
- * Warm pnpm stores. The host keeps a seed (a pnpm `store/` and `cache/`, filled by `pnpm fetch`
- * outside any sandbox), and each session gets its own copy-on-write clone of it. Sessions write only
- * their copy; nothing flows back into the seed.
+ * Warm seeds. The host keeps one (a pnpm `store/` and `cache/`, filled by `pnpm fetch` outside any
+ * sandbox, or Playwright's `browsers/`), and each session gets its own copy-on-write clone of it.
+ * Sessions write only their copy; nothing flows back into the seed.
  */
 import { execFileSync } from 'node:child_process';
 import { existsSync, mkdirSync, readdirSync, realpathSync, renameSync, rmSync } from 'node:fs';
@@ -88,6 +88,40 @@ function isEmpty(dir: string): boolean {
   } catch {
     // Unreadable means someone else's data: never treat it as ours to replace.
     return false;
+  }
+}
+
+/**
+ * Give a session Playwright's browsers: `copyDir` (the session's `.browsers`) is cloned from
+ * `<seedDir>/browsers` when the session does not have it yet. A `copyDir` with content is kept, so a
+ * restarted session keeps its copy. Without a usable seed the dir starts empty and Playwright
+ * reports a missing browser instead of downloading one.
+ */
+export function seedBrowsersCopy(seedDir: string, copyDir: string): SeedResult {
+  mkdirSync(dirname(copyDir), { recursive: true });
+  if (!isEmpty(copyDir)) return { seeded: false, reason: 'already present' };
+
+  let seed: string;
+  try {
+    // Resolve once, so a seed rebuilt and swapped in meanwhile can't mix two versions.
+    seed = realpathSync(seedDir);
+  } catch (err) {
+    mkdirSync(copyDir, { recursive: true });
+    return { seeded: false, reason: `unseeded: ${(err as Error).message}` };
+  }
+
+  // An empty dir is what a failed clone leaves behind; publishing over it is safe.
+  const staged = `${copyDir}.partial`;
+  try {
+    rmSync(staged, { recursive: true, force: true });
+    cloneTree(join(seed, 'browsers'), staged);
+    rmSync(copyDir, { recursive: true, force: true });
+    renameSync(staged, copyDir);
+    return { seeded: true };
+  } catch (err) {
+    rmSync(staged, { recursive: true, force: true });
+    mkdirSync(copyDir, { recursive: true });
+    return { seeded: false, reason: `unseeded: browsers: ${(err as Error).message}` };
   }
 }
 

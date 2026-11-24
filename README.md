@@ -58,7 +58,24 @@ It is a convenience, not a security boundary: a command that sets `PATH` itself,
 | `factoryDirs` | `[]` | Your Factory's data and secrets dirs. Proved unreadable on start. |
 | `denyRead` | `[]` | More paths to prove unreadable, added to the defaults: `~/.ssh`, `~/.aws`, `~/.gnupg`, `~/.netrc`, `~/.npmrc`, `~/.docker`, `~/.kube`, `~/.config/gh`, `~/.config/gcloud` and the server's `./.env`. |
 | `pnpmSeed` | none | A host dir holding a pnpm `store/` and `cache/`, for example filled by `pnpm fetch --store-dir <seed>/store --cache-dir <seed>/cache` outside the sandbox. Each session gets its own copy-on-write clone at `<sessionRoot>/.pnpm` (one `clonefileat` per subtree, `store/` and `cache/`, and no extra disk until either side changes), and pnpm uses it through `pnpm_config_store_dir` and `pnpm_config_cache_dir`. Packages missing from the seed download into the session's copy; nothing flows back. A restarted session keeps its copy, and a subtree the seed could not provide is retried on the next start. When the seed cannot be used, `start()` warns once with the reason (`pnpmSeedResult` has it too) instead of leaving the session cold without a trace. The seed must be on the same APFS volume as `root`; otherwise sessions start with an empty copy. Must not overlap a deny path. |
+| `browserSeed` | none | A host dir whose `browsers/` holds Playwright's browsers, for example filled by `PLAYWRIGHT_BROWSERS_PATH=<seed>/browsers npx playwright install chromium-headless-shell` outside the sandbox, which writes `<seed>/browsers/chromium_headless_shell-<revision>/…`. Each session gets its own copy-on-write clone of that `browsers/` at `<sessionRoot>/.browsers`, mounted read-only, and Playwright uses it through `PLAYWRIGHT_BROWSERS_PATH`. `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` is set whenever the option is configured, so a session without a usable seed reports a missing browser instead of downloading one. `start()` warns once when the seed cannot be used (`browserSeedResult` has it too) and the session still starts. Needs the `extraProfile` patch (see [Chromium](#chromium)). Must not overlap a deny path. |
 | `limiter` | one shared `ResourceLimiter` | The execution slot (below). Pass `ResourceLimiterOptions`, your own `ExecutionLimiter`, or `false` for none. |
+
+### Chromium
+
+Playwright downloads a browser into its cache the first time a test launches one. Inside the sandbox that cache is unreadable (the server's `~/.cache/ms-playwright` is outside it) and the download fails, so a headless test either hangs or dies. `browserSeed` fixes that the same way `pnpmSeed` fixes installs:
+
+```sh
+# On the host, once:
+export PLAYWRIGHT_BROWSERS_PATH=/path/to/browser-seed/browsers
+npx playwright install chromium-headless-shell
+```
+
+That fills `/path/to/browser-seed/browsers/chromium_headless_shell-<revision>/…`. Pass `/path/to/browser-seed` as `browserSeed`. Each session gets a copy-on-write clone of its `browsers/` at `<sessionRoot>/.browsers`, mounted read-only, and Playwright uses it through `PLAYWRIGHT_BROWSERS_PATH`; `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` is always set when the option is, so a session without the seed reports a missing browser instead of downloading one. The seed itself is never mounted, and must be on the same APFS volume as `root` and outside every deny path.
+
+Chromium also needs to register and look up its Mach rendezvous port, which the default profile denies, so `browserSeed` appends two rules to the Seatbelt profile through Sandcastle's `seatbelt({ extraProfile })`. That option is **not** in `@ai-hero/sandcastle@0.14.0`: it comes from a patch in the consumer repo. Without the patch, a seeded `start()` proves the rules were ignored and refuses to start with a clear `SandboxIsolationError`, rather than letting Chromium hang.
+
+Both rules are process-wide name prefixes, so any process in any session can register or look up under them; see `THREAT_MODEL.md`.
 
 ### The execution slot
 
@@ -73,7 +90,7 @@ To share a slot across processes, implement `ExecutionLimiter` (`acquire(req) �
 
 ### Lower level
 
-`new SeatbeltSandbox({ sessionId, ...options, limiter })` is the sandbox class itself (a `MastraSandbox`). It also exposes `sessionRoot`, `denyReadPaths`, `pnpmSeedResult` (whether `start()` seeded the copy, and why not) and, after `destroy()`, `preservedWorktreePath` when Sandcastle kept a worktree with uncommitted changes. Sandcastle keeps the session root on disk; clean up `root` yourself when sessions are done.
+`new SeatbeltSandbox({ sessionId, ...options, limiter })` is the sandbox class itself (a `MastraSandbox`). It also exposes `sessionRoot`, `denyReadPaths`, `pnpmSeedResult` and `browserSeedResult` (whether `start()` seeded each copy, and why not) and, after `destroy()`, `preservedWorktreePath` when Sandcastle kept a worktree with uncommitted changes. Sandcastle keeps the session root on disk; clean up `root` yourself when sessions are done.
 
 ## How it compares
 
