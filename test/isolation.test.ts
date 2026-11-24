@@ -466,3 +466,93 @@ describe('pnpm seed (macOS)', { skip: skipReason }, () => {
     }
   });
 });
+
+describe('browser seed (macOS)', { skip: skipReason }, () => {
+  let dir: string, seed: string, sb: SeatbeltSandbox | undefined;
+
+  before(() => {
+    dir = realpathSync(mkdtempSync(join(tmpdir(), 'mfms-browsers-it-')));
+    seed = join(dir, 'seed');
+    const browser = join(seed, 'browsers', 'chromium_headless_shell-1234', 'chrome-headless-shell-mac-arm64');
+    mkdirSync(browser, { recursive: true });
+    writeFileSync(join(browser, 'chrome-headless-shell'), 'browser bytes\n');
+  });
+
+  after(async () => {
+    await sb?.destroy();
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a seeded session gets a read-only copy, or is refused without extraProfile', async () => {
+    sb = new SeatbeltSandbox({ sessionId: 'browsers', root: join(dir, 'sandboxes'), browserSeed: seed, commandTimeoutMs: 120_000 });
+    try {
+      await sb.start();
+    } catch (err) {
+      // An unpatched provider can't run a seeded session: reporting that is the contract.
+      assert.ok(err instanceof SandboxIsolationError, String(err));
+      assert.match(err.message, /extraProfile/);
+      assert.equal(sb.status, 'error');
+      return;
+    }
+
+    const copy = join(sb.sessionRoot, '.browsers');
+    const sandbox = sb;
+    const sh = (script: string) => sandbox.executeCommand('/bin/sh', ['-c', script]);
+    assert.equal(sandbox.browserSeedResult?.seeded, true);
+    const r = await sh(
+      'echo "$PLAYWRIGHT_BROWSERS_PATH|$PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD"; ' +
+        `cat "$PLAYWRIGHT_BROWSERS_PATH/chromium_headless_shell-1234/chrome-headless-shell-mac-arm64/chrome-headless-shell"; ` +
+        'echo x > "$PLAYWRIGHT_BROWSERS_PATH/planted" 2>/dev/null && echo wrote; echo done',
+    );
+    assert.equal(r.stdout, `${copy}|1\nbrowser bytes\ndone\n`, r.stderr);
+
+    // Read-only in fact, not just by convention; the seed itself is unreadable and unchanged.
+    assert.equal(existsSync(join(copy, 'planted')), false);
+    assert.equal((await sh(`ls ${seed} >/dev/null 2>&1 && echo readable; echo done`)).stdout, 'done\n');
+    assert.equal((await sh('git status --porcelain')).stdout, '');
+
+    // A restarted session keeps its own copy instead of re-seeding.
+    await sandbox.destroy();
+    sb = new SeatbeltSandbox({ sessionId: 'browsers', root: join(dir, 'sandboxes'), browserSeed: seed });
+    await sb.start();
+    assert.equal(sb.browserSeedResult?.reason, 'already present');
+    assert.equal((await sb.executeCommand('/bin/sh', ['-c', 'echo "$PLAYWRIGHT_BROWSERS_PATH"'])).stdout, `${copy}\n`);
+  });
+
+  test('a missing browser seed still starts the session, with one warning', async () => {
+    const warn = mock.method(console, 'warn', () => undefined);
+    const cold = new SeatbeltSandbox({ sessionId: 'cold-browsers', root: join(dir, 'sandboxes'), browserSeed: join(dir, 'no-browser-seed-yet') });
+    try {
+      await cold.start();
+      const said = warn.mock.calls.map((c) => String(c.arguments[0])).filter((a) => a.startsWith('browserSeed '));
+      assert.equal(said.length, 1, said.join('\n'));
+      assert.match(said[0], /no-browser-seed-yet/);
+      assert.equal(cold.browserSeedResult?.seeded, false);
+      assert.match(cold.browserSeedResult?.reason ?? '', /no-browser-seed-yet/);
+      const r = await cold.executeCommand('/bin/sh', [
+        '-c',
+        'echo "[${PLAYWRIGHT_BROWSERS_PATH-unset}]"; echo "[$PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD]"',
+      ]);
+      assert.equal(r.stdout, '[unset]\n[1]\n', r.stderr);
+    } finally {
+      warn.mock.restore();
+      await cold.destroy();
+    }
+  });
+
+  test('without browserSeed: no clone, no Playwright env', async () => {
+    const plain = new SeatbeltSandbox({ sessionId: 'no-browsers', root: join(dir, 'sandboxes') });
+    try {
+      await plain.start();
+      assert.equal(plain.browserSeedResult, undefined);
+      assert.equal(existsSync(join(plain.sessionRoot, '.browsers')), false);
+      const r = await plain.executeCommand('/bin/sh', [
+        '-c',
+        'echo "[${PLAYWRIGHT_BROWSERS_PATH-unset}]|${PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD-unset}"',
+      ]);
+      assert.equal(r.stdout, '[unset]|unset\n', r.stderr);
+    } finally {
+      await plain.destroy();
+    }
+  });
+});

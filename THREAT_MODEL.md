@@ -12,8 +12,9 @@
 |---|---|
 | Reading the Factory's secrets or data | Sandcastle's Seatbelt profile denies file reads by default. Allowed: system dirs (`/bin`, `/usr`, `/System`, `/Library`, `/opt`, parts of `/private`), each `PATH` dir (never the home dir or an ancestor of it), the worktree, the session's read-only `.bin` (the `mktemp` shim), and a private `HOME` and `TMPDIR`. `start()` proves `factoryDirs`, `denyRead` and the defaults are unreadable, and refuses to start otherwise. |
 | Reading `~/.ssh`, cloud credentials, other `.env` files | Same deny-by-default rule; the home dir isn't readable. |
-| Writing outside the worktree (planting a launch agent, editing another repo, changing the Factory) | Writes are allowed only in the worktree, its git dirs, the private `HOME` and `TMPDIR`, and (with `pnpmSeed`) the session's own pnpm copy at `<sessionRoot>/.pnpm`. Git control files Sandcastle marks read-only stay read-only, and so does the session's `mktemp` shim in `<sessionRoot>/.bin`. |
+| Writing outside the worktree (planting a launch agent, editing another repo, changing the Factory) | Writes are allowed only in the worktree, its git dirs, the private `HOME` and `TMPDIR`, and (with `pnpmSeed`) the session's own pnpm copy at `<sessionRoot>/.pnpm`. With `browserSeed` the session's browser copy at `<sessionRoot>/.browsers` is mounted read-only and denied writes twice: by the read-only mount and by an explicit `(deny file-write* (subpath …))` in the extra profile. Git control files Sandcastle marks read-only stay read-only, and so does the session's `mktemp` shim in `<sessionRoot>/.bin`. |
 | Poisoning other sessions' packages (with `pnpmSeed`) | The seed is never mounted: the host clones it into each session's own `.pnpm` before the sandbox starts, so a session can neither read nor write the seed, and what it writes into its copy reaches no other session. Whoever fills the seed decides what sessions start with, so fill it outside any sandbox from trusted lockfiles. A seed that overlaps a deny path is refused. |
+| Poisoning other sessions' browser (with `browserSeed`) | Same shape: `browsers/` is cloned into the session's own `.browsers` before the sandbox starts, the seed is never mounted, and a seed overlapping a deny path is refused. Fill it on the host with a Playwright you trust. |
 | Secrets leaking through the environment | Commands get only `env`, `passEnv` names, Factory's runtime env and the per-command env. The server's own env never reaches them. |
 | Secrets leaking through `ps` | Per-command env is written to the command's stdin as `export` lines, never put in argv. |
 | Escaping through a container engine | Sandcastle denies the Docker, Colima, OrbStack, Lima and Rancher sockets and dirs. |
@@ -32,6 +33,7 @@
 - **Kernel, Seatbelt or Sandcastle bugs.** This is a policy enforced by the macOS kernel. A kernel exploit escapes it. Keep macOS updated.
 - **A compromised server process.** The Factory itself runs unsandboxed; this only isolates the commands it runs for agents.
 - **Other operating systems.** It runs only on macOS 14+, and never falls back to unsandboxed execution.
+- **Chromium's Mach rendezvous port is shared (with `browserSeed`).** The two extra rules allow *any* process in the sandbox to register and look up Mach names under `org.chromium.Chromium.MachPortRendezvousServer`. Mach names are host-global, not per-session, so that prefix is also reachable from sibling sessions and from the server user's own Chrome, and a hostile command could register or look up there. It is what Chromium needs to start headless without hanging; the alternative is no headless Chromium at all. **Accepted risk**, revisit if a narrower per-session name is possible. Chromium's own sandbox is not used inside this one either.
 
 ## `sandbox-exec` is deprecated
 
@@ -49,4 +51,5 @@ Apple marks `sandbox-exec` and the Seatbelt profile language deprecated, and doc
 - `git clone` over HTTPS and `npm view` work;
 - bare `mktemp`, `mktemp -d` and `mktemp -t prefix` write into the session's private `TMPDIR`, the shim is first on `PATH` and can't be rewritten, an explicit template still works, the shared per-user temp dir stays unwritable, one session's `TMPDIR` can't be listed from another, and Factory 0.30.0's four workspace scripts — `WORKSPACE_DIFF_SCRIPT`, `BOUNDED_OUTPUT_SCRIPT`, `readFilePrefix`'s snippet and `SPECIAL_ENTRIES_SCRIPT` — run verbatim and exit 0;
 - `start()` refuses when a deny path is readable;
-- with `pnpmSeed`, the session writes only its own copy, the seed stays unreadable and unchanged, and a seed inside a deny path is refused.
+- with `pnpmSeed`, the session writes only its own copy, the seed stays unreadable and unchanged, and a seed inside a deny path is refused;
+- with `browserSeed`, a seeded session either gets a read-only `.browsers` copy (env points at it, writes fail, the seed stays unreadable and unchanged, `git status` stays clean) or is refused with an `extraProfile` error when the provider is unpatched; a missing seed starts the session with one warning and no `PLAYWRIGHT_BROWSERS_PATH`, and without the option there is no copy and no Playwright env.
