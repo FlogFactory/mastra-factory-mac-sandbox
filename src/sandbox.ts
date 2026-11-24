@@ -58,10 +58,13 @@ export interface SeatbeltSandboxOptions {
    */
   pnpmSeed?: string;
   /**
-   * A host dir holding Playwright's `browsers/` (for example filled by
-   * `PLAYWRIGHT_BROWSERS_PATH=<seed> npx playwright install chromium-headless-shell` outside the
-   * sandbox). Each session gets its own copy-on-write clone at `<sessionRoot>/.browsers`, mounted
-   * read-only, and Playwright uses it through `PLAYWRIGHT_BROWSERS_PATH`. The seed itself stays
+   * A host dir whose `browsers/` holds Playwright's browsers (for example filled by
+   * `PLAYWRIGHT_BROWSERS_PATH=<seed>/browsers npx playwright install chromium-headless-shell`
+   * outside the sandbox, which writes `<seed>/browsers/chromium_headless_shell-<revision>/…`). Each
+   * session gets its own copy-on-write clone of that `browsers/` at `<sessionRoot>/.browsers`,
+   * mounted read-only, and Playwright uses it through `PLAYWRIGHT_BROWSERS_PATH`.
+   * `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` is set whenever this option is, so a session without a
+   * usable seed reports a missing browser instead of downloading one. The seed itself stays
    * unreadable from inside. Default: none, Playwright uses the private HOME.
    *
    * Needs a Sandcastle whose `seatbelt()` accepts `extraProfile` (Chromium cannot register its
