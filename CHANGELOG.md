@@ -2,7 +2,7 @@
 
 All notable changes to this package. It follows [Semantic Versioning](https://semver.org).
 
-## Unreleased
+## 0.3.0 (2026-11-24)
 
 - New `browserSeed` option: headless Chromium for sessions. Each session gets a copy-on-write clone of a host-filled Playwright `browsers/` dir at `<sessionRoot>/.browsers`, mounted read-only, and Playwright finds it through `PLAYWRIGHT_BROWSERS_PATH`; `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1` stops a session without the seed from downloading a browser. The seed is never mounted, a seed overlapping a deny path is refused, and an unusable seed is reported once on `start()` while the session still runs. Chromium needs its Mach rendezvous port, so a seeded session's profile gains two `mach-register`/`mach-lookup` rules through Sandcastle's `seatbelt({ extraProfile })`. That option is not in `@ai-hero/sandcastle@0.14.0` (it needs the consumer's patch); without it `start()` refuses with a clear `SandboxIsolationError` instead of letting Chromium hang. See `THREAT_MODEL.md` for the accepted risk of the shared Mach prefix.
 
